@@ -2,17 +2,22 @@
 document.addEventListener('DOMContentLoaded',()=>{
  const nav=document.querySelector('.nav'); const toggle=document.querySelector('.mobile-toggle');
  if(toggle){toggle.addEventListener('click',()=>nav.classList.toggle('open'))}
- document.querySelectorAll('form[data-static-form]').forEach(form=>{
+ document.querySelectorAll('form[data-contact-form]').forEach(form=>{
   form.addEventListener('submit',e=>{
-   e.preventDefault();
-   const box=form.querySelector('.form-message'); if(!box)return;
+   const box=form.querySelector('.form-message');
    const phone=form.querySelector('#phone'); const sms=form.querySelector('#smsConsent');
    if(phone && sms && phone.value.trim() && !sms.checked){
-    box.className='form-message notice error';
-    box.textContent='If you include a phone number, please check the SMS consent box or remove the phone number before submitting.';
+    e.preventDefault();
+    if(box){
+     box.className='form-message notice error';
+     box.textContent='If you include a phone number, please check the SMS consent box or remove the phone number before submitting.';
+    }
     sms.focus(); return;
    }
-   box.className='form-message notice success'; box.textContent=form.dataset.success || 'Thanks — your message was captured in this static demo.'; form.reset();
+   if(box){
+    box.className='form-message notice success';
+    box.textContent='Sending your request securely…';
+   }
   });
  });
  const reg=document.querySelector('form[data-register-form]');
