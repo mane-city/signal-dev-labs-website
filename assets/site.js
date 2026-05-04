@@ -5,15 +5,6 @@ document.addEventListener('DOMContentLoaded',()=>{
  document.querySelectorAll('form[data-contact-form]').forEach(form=>{
   form.addEventListener('submit',e=>{
    const box=form.querySelector('.form-message');
-   const phone=form.querySelector('#phone'); const sms=form.querySelector('#smsConsent');
-   if(phone && sms && phone.value.trim() && !sms.checked){
-    e.preventDefault();
-    if(box){
-     box.className='form-message notice error';
-     box.textContent='If you include a phone number, please check the SMS consent box or remove the phone number before submitting.';
-    }
-    sms.focus(); return;
-   }
    if(box){
     box.className='form-message notice success';
     box.textContent='Sending your request securely…';
