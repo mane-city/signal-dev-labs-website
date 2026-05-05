@@ -5,3 +5,6 @@
 /login /login.html 200
 /privacy-policy /privacy-policy.html 200
 /terms /terms.html 200
+/twilio/sms/inbound /.netlify/functions/twilio-sms-inbound 200
+/twilio/sms/inbound-fallback /.netlify/functions/twilio-sms-status 200
+/twilio/sms/status /.netlify/functions/twilio-sms-status 200
