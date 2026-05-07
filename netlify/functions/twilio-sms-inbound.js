@@ -61,8 +61,49 @@ function normalizeBody(body) {
   return String(body || '').trim().replace(/^DD\s+/i, '').replace(/^due\s+diligence\s+/i, '').trim();
 }
 
-function authorizedSenders() {
-  return new Set(String(process.env.AUTHORIZED_SMS_SENDERS || '').split(',').map((s) => s.trim()).filter(Boolean));
+function normalizePhone(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const plusDigits = raw.replace(/[^+\d]/g, '');
+  if (plusDigits.startsWith('+')) return '+' + plusDigits.slice(1).replace(/\D/g, '');
+  const digits = plusDigits.replace(/\D/g, '');
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length > 10) return `+${digits}`;
+  return raw;
+}
+
+async function fetchJson(url, timeoutMs = 2500) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      headers: { 'accept': 'application/json', 'cache-control': 'no-cache' },
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`allowlist_http_${response.status}`);
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function isAuthorizedSender(from) {
+  const url = process.env.SMS_ALLOWLIST_URL;
+  const pepper = process.env.SMS_ALLOWLIST_HASH_PEPPER;
+  const normalized = normalizePhone(from);
+  if (!url || !pepper || !normalized) {
+    return { ok: false, authorized: false, mode: 'allowlist_misconfigured' };
+  }
+  try {
+    const allowlist = await fetchJson(url);
+    const hashes = Array.isArray(allowlist.authorized_sender_hashes)
+      ? new Set(allowlist.authorized_sender_hashes.map((s) => String(s).trim()).filter(Boolean))
+      : new Set();
+    const hash = crypto.createHmac('sha256', pepper).update(normalized).digest('hex');
+    return { ok: true, authorized: hashes.has(hash), mode: 'dynamic_allowlist', hash_count: hashes.size };
+  } catch (error) {
+    return { ok: false, authorized: false, mode: 'allowlist_error', error: String(error && error.message ? error.message : error) };
+  }
 }
 
 exports.handler = async (event) => {
@@ -79,9 +120,9 @@ exports.handler = async (event) => {
   const accountSid = params.AccountSid || '';
   const company = normalizeBody(params.Body || '');
   const configuredAccount = process.env.TWILIO_ACCOUNT_SID || '';
-  const configuredTo = process.env.TWILIO_PHONE_NUMBER || '+18885266409';
-  const allowed = authorizedSenders();
+  const configuredTo = process.env.TWILIO_PHONE_NUMBER || '+188****6409';
   const maskedFrom = String(from).replace(/(\+?\d{2})\d+(\d{4})$/, '$1****$2');
+  const authz = await isAuthorizedSender(from);
 
   console.log(JSON.stringify({
     event: 'twilio_due_diligence_inbound',
@@ -93,8 +134,10 @@ exports.handler = async (event) => {
     to,
     to_ok: configuredTo ? to === configuredTo : 'not_configured',
     company,
-    authorized_sender_configured: allowed.size > 0,
-    authorized: allowed.has(from),
+    authorization_mode: authz.mode,
+    authorization_lookup_ok: authz.ok,
+    authorized_sender_configured: (authz.hash_count || 0) > 0,
+    authorized: authz.authorized,
   }));
 
   if (!sig.ok) {
@@ -106,7 +149,7 @@ exports.handler = async (event) => {
   if (configuredTo && to && to !== configuredTo) {
     return { statusCode: 403, headers, body: '<Response><Message>Destination validation failed.</Message></Response>' };
   }
-  if (!allowed.has(from)) {
+  if (!authz.authorized) {
     return { statusCode: 200, headers, body: '<Response><Message>Sorry, this number isn&apos;t authorized for due-diligence requests.</Message></Response>' };
   }
   if (!company) {
