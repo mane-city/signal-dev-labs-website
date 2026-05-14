@@ -120,7 +120,7 @@ exports.handler = async (event) => {
   const accountSid = params.AccountSid || '';
   const company = normalizeBody(params.Body || '');
   const configuredAccount = process.env.TWILIO_ACCOUNT_SID || '';
-  const configuredTo = process.env.TWILIO_PHONE_NUMBER || '+188****6409';
+  const configuredTo = process.env.TWILIO_PHONE_NUMBER || '';
   const maskedFrom = String(from).replace(/(\+?\d{2})\d+(\d{4})$/, '$1****$2');
   const authz = await isAuthorizedSender(from);
 
@@ -156,8 +156,55 @@ exports.handler = async (event) => {
     return { statusCode: 200, headers, body: '<Response><Message>Send a company name, for example: Apple. Reply STOP to opt out or HELP for help.</Message></Response>' };
   }
 
-  // Production bridge point: this currently ACKs and logs a durable Netlify function event.
-  // The local Tektronix due-diligence worker remains the private DB-first report generator.
+  const forwardUrl = process.env.SMS_BRIDGE_FORWARD_URL || '';
+  if (forwardUrl) {
+    try {
+      const response = await fetch(forwardUrl, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'accept': 'application/json',
+          'x-sms-bridge-key': process.env.SMS_BRIDGE_SHARED_SECRET || '',
+        },
+        body: JSON.stringify({
+          from,
+          to,
+          body: company,
+          Body: company,
+          From: from,
+          To: to,
+          MessageSid: messageSid,
+          AccountSid: accountSid,
+          provider: 'twilio',
+          ingress: 'netlify-twilio-sms-inbound',
+        }),
+      });
+      let forwardResult = {};
+      try { forwardResult = await response.json(); } catch { forwardResult = {}; }
+      console.log(JSON.stringify({
+        event: 'twilio_due_diligence_forwarded',
+        at: new Date().toISOString(),
+        messageSid,
+        ok: response.ok && forwardResult.ok !== false,
+        status: response.status,
+        request_uuid: forwardResult.request_uuid || null,
+        delivery: forwardResult.delivery || null,
+      }));
+      if (!response.ok || forwardResult.ok === false) {
+        return { statusCode: 200, headers, body: '<Response><Message>Request received, but the due-diligence bridge could not accept it. Devin has been notified to check the bridge.</Message></Response>' };
+      }
+    } catch (error) {
+      console.log(JSON.stringify({
+        event: 'twilio_due_diligence_forward_error',
+        at: new Date().toISOString(),
+        messageSid,
+        error: String(error && error.message ? error.message : error),
+      }));
+      return { statusCode: 200, headers, body: '<Response><Message>Request received, but the due-diligence bridge is temporarily unavailable. Devin has been notified to check the bridge.</Message></Response>' };
+    }
+  }
+
+  // Production bridge point: ACK after the private DB-first report generator accepts the request.
   const ack = `Got it — generating ${company} due diligence report for you now. I'll email you and post in Teams when ready.`;
   return { statusCode: 200, headers, body: `<Response><Message>${xmlEscape(ack)}</Message></Response>` };
 };
